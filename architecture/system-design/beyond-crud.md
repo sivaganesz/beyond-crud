@@ -194,5 +194,3 @@ A system becomes “beyond CRUD” when it starts handling:
 ### 🔥 One-Line Understanding
 
 > **Beyond CRUD = Systems that don’t just store data, but intelligently manage real-world complexity at scale**
-
----
