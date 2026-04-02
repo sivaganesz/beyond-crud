@@ -215,5 +215,3 @@ A modern backend is like a **well-organized city**:
 ### 🔥 One-Line Understanding
 
 > **A modern backend is a collaboration of specialized components, each solving a specific problem to make systems fast, scalable, and reliable**
-
----
