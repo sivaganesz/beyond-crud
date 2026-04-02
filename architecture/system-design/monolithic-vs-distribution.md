@@ -312,5 +312,3 @@ It’s about **when to use what**:
 
 > **Monolith = Simple but rigid**
 > **Distributed System = Powerful but complex**
-
----
