@@ -326,5 +326,3 @@ But if communication fails:
 ### 🔥 One-Line Understanding
 
 > **Communication System = The invisible engine that moves data across your system reliably, quickly, and at scale**
-
----
