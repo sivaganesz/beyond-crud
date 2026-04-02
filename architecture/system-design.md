@@ -1,1 +1,198 @@
 🗓️ Day 1
+
+# System Design
+## What you must learn (root → advanced)
+
+- What is system design 🧠
+- Difference: Monolith 🧱 vs Distributed system 🌐
+- What is a communication system 📡
+- Request–Response 🔁 vs Event-Driven ⚡ vs Realtime ⏱️
+
+## Components of modern backend
+
+- Client 📱
+- API 🔌
+- Cache ⚡
+- Queue 📬
+- WebSocket 🔗
+- Database 🗄️
+
+## What makes a system beyond CRUD 🚀
+
+---
+
+## 🎯 Problem Statement
+
+We are building:
+
+> A **realtime communication platform** where users can send and receive messages instantly, even under massive scale, while ensuring **low latency, fault tolerance, and observability**.
+
+---
+
+## 🖼️ High-Level Architecture (Visual Intuition)
+
+![Image](https://miro.medium.com/0%2AQEB7BzTo5hLd9F9Y)
+
+![Image](https://miro.medium.com/v2/resize%3Afit%3A1200/1%2Am-Ciwq8RBulzYS-SdezufQ.png)
+
+![Image](https://user-images.githubusercontent.com/41498427/115279105-e6be5680-a163-11eb-9c29-cc7e4738eab0.png)
+
+![Image](https://miro.medium.com/v2/resize%3Afit%3A1400/1%2Axg_oQUjcImIjSauQrUKR8Q.png)
+
+---
+
+## 🧩 Core Components (with Storytelling)
+
+---
+
+### 1️⃣ Client (Web / Mobile)
+
+#### 🧠 Concept
+
+User-facing application (React, mobile app) that interacts with the system.
+
+You open a chat app and type a message to your friend. The moment you hit send, your app instantly pushes that message toward the backend. From your perspective, it feels like a simple interaction, but your client is actually packaging data, maintaining connections, and waiting for real-time updates. It acts as the starting point of every interaction in the system. Without it, the system has no way to communicate with users.
+
+---
+
+### 2️⃣ API Server (Node.js)
+
+#### 🧠 Concept
+
+Gateway that validates, authenticates, and routes requests.
+
+Every time you send a message, it first passes through a secure checkpoint. The API server checks who you are, whether you’re allowed to send the message, and ensures the data is valid. It then decides where the message should go next. Just like a security guard directing people inside a building, the API ensures only valid and safe requests enter the system. It protects and organizes the entire backend.
+
+---
+
+### 3️⃣ WebSocket Server
+
+#### 🧠 Concept
+
+Maintains persistent connections for real-time communication.
+
+You’re chatting with a friend, and suddenly their reply appears instantly on your screen. There’s no refresh, no delay—it just shows up. This happens because your app maintains a continuous connection with the server. The WebSocket server keeps this connection alive and pushes updates instantly. It’s like being on a live call instead of sending letters back and forth.
+
+---
+
+### 4️⃣ Redis (Cache + Pub/Sub)
+
+#### 🧠 Concept
+
+* Cache → fast data access
+* Pub/Sub → event distribution
+
+Imagine checking the same chat repeatedly within seconds. Instead of asking the database every time, the system quickly serves data from memory. At the same time, when a new message arrives, Redis broadcasts it like a radio signal to all interested services. Some components listen and react instantly without direct communication. It acts as both a shortcut and a communication hub.
+
+---
+
+### 5️⃣ Queue (BullMQ)
+
+#### 🧠 Concept
+
+Handles background and retryable tasks asynchronously.
+
+You send a message to a friend who is offline, and the app still says “sent.” Behind the scenes, the system quietly places a task in a queue to retry delivery or send a notification later. You don’t wait for all this to finish—it happens in the background. Like a to-do list for the system, the queue ensures nothing is forgotten. Even failures get another chance to succeed.
+
+---
+
+### 6️⃣ Database (PostgreSQL)
+
+#### 🧠 Concept
+
+Source of truth for all persistent data.
+
+Even if you close the app or lose internet, your messages are still there when you return. That’s because every important piece of data is stored safely in the database. It acts like a permanent record book that never forgets. No matter what happens to other components, the database ensures your data remains intact. It’s the backbone of reliability.
+
+---
+
+### 7️⃣ Observability (Prometheus + Grafana)
+
+#### 🧠 Concept
+
+Monitoring system health, performance, and errors.
+
+One day, users start complaining that messages are delayed. Engineers don’t guess—they open dashboards and trace exactly where the delay is happening. They discover a slow queue and fix it quickly before it gets worse. Without visibility, the issue would remain hidden. Observability acts like the system’s monitoring center, constantly watching everything.
+
+---
+
+## 🔗 How Components Connect
+
+```
+[ Client ]
+    │
+    ▼
+[ API Server ] ───────► [ PostgreSQL ]
+    │
+    ▼
+[ Redis Pub/Sub ] ◄──► [ WebSocket Server ]
+    │
+    ▼
+[ Queue (BullMQ) ] ───► [ Background Workers ]
+```
+
+---
+
+## 🔄 Message Flow (Step-by-Step with Story)
+
+### 📖 Scenario: Sending a Message
+
+You type “Hey!” and press send.
+
+1. Client sends message via WebSocket/API
+2. API validates user & request
+3. Message stored in PostgreSQL
+4. Event published via Redis Pub/Sub
+5. WebSocket pushes message instantly to receiver
+6. If user offline → Queue stores retry/notification job
+
+👉 What feels instant is actually a **multi-step distributed flow**
+
+---
+
+## 🧠 Why This System Exists
+
+This system solves:
+
+* ⚡ Real-time communication
+* 📈 Scalability (millions of users)
+* 🔁 Reliable delivery (retry, queues)
+* 🔗 Decoupled architecture
+* 📴 Offline user handling
+
+---
+
+## ❌ Why This is NOT CRUD (Deep Insight)
+
+### CRUD Thinking
+
+```
+Save message → Done
+```
+
+---
+
+### Beyond CRUD Thinking
+
+```
+Send → Validate → Store → Publish Event
+     → Deliver in realtime
+     → Retry if failed
+     → Notify if offline
+     → Monitor system health
+```
+
+---
+
+### 📖 Story (3–5 lines)
+
+In a simple CRUD app, sending a message ends once it’s stored in the database. But in a real system, that’s just the beginning. The system must ensure the message reaches the receiver instantly, even if networks fail or users are offline. It must retry, notify, and track everything silently. What seems like a single action actually triggers a chain of coordinated processes. That complexity is what makes it beyond CRUD.
+
+---
+
+## 🔥 Final Mental Model
+
+> You are not building a feature.
+> You are building a **living system that reacts, scales, and survives failure.**
+
+---
