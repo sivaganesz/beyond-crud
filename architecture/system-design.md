@@ -194,5 +194,3 @@ In a simple CRUD app, sending a message ends once it’s stored in the database.
 
 > You are not building a feature.
 > You are building a **living system that reacts, scales, and survives failure.**
-
----

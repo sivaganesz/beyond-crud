@@ -349,5 +349,3 @@ You’re chatting with a friend on WhatsApp late at night, and as soon as they t
 ### 🔥 One-Line Understanding
 
 > **Communication patterns define *how* data flows — and choosing the right one decides your system’s speed, scalability, and user experience**
-
----
