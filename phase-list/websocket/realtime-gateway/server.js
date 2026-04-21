@@ -1,6 +1,6 @@
 process.on("uncaughtException", console.error);
 let isShuttingDown = false;
-const DRAIN_TIMEOUT = 5000; // 15s to drain
+const DRAIN_TIMEOUT = 2000; // 15s to drain
 
 let connections = 0;
 
@@ -88,8 +88,10 @@ wss.on("connection", (ws, req, user) => {
     });
 });
 
-server.listen(8080, () => {
-    console.log("WS Gateway running on ws://localhost:8080");
+const PORT = process.env.PORT || 8080;
+
+server.listen(PORT, () => {
+    console.log(`WS Gateway running on ws://localhost:${PORT}`);
     console.log(
         "Demo token for testing:",
         createToken("sivaganesz")

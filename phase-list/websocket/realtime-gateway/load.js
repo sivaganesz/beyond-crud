@@ -3,7 +3,7 @@ import WebSocket from "ws";
 import jwt from "jsonwebtoken";
 
 const SECRET = "phase1secret";
-const TOTAL_CLIENTS = 6000; // increase gradually
+const TOTAL_CLIENTS = 1000; // increase gradually
 
 function token(id) {
   return jwt.sign({ username: "user" + id }, SECRET);
@@ -25,6 +25,6 @@ for (let i = 0; i < TOTAL_CLIENTS; i++) {
           text: "ping " + i,
         })
       );
-    }, 10000);
+    }, 5000);
   });
 }

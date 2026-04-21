@@ -11,6 +11,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "ioredis": "^5.4.1",
     "jsonwebtoken": "^9.0.3",
     "ws": "^8.20.0"
   }
