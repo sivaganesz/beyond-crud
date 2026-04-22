@@ -17,12 +17,20 @@ setInterval(() => {
 import http from "http";
 import { WebSocketServer } from "ws";
 import { verifyToken, createToken } from "./auth.js";
-import { joinRoom, leaveAllRooms, broadcast } from "./rooms.js";
+import { joinRoom, leaveAllRooms, broadcast, sendDirectMessage, userSockets, initMessenger } from "./rooms.js";
 import { setupHeartbeat } from "./heartbeat.js";
+import { setUserOnline, setUserOffline, getAllOnlineUsers } from "./presence.js";
+
+const PORT = process.env.PORT || 8080;
+const SERVER_ID = `server:${PORT}`;
+
+// Initialize the DM/Room transport for this server
+initMessenger(SERVER_ID);
 
 const server = http.createServer();
 
 const wss = new WebSocketServer({ noServer: true });
+console.log("WebSocket server initialized:", wss);
 setupHeartbeat(wss);
 
 // ---- Upgrade with JWT auth ----
@@ -46,30 +54,53 @@ server.on("upgrade", (req, socket, head) => {
 });
 
 // ---- Connection lifecycle ----
-wss.on("connection", (ws, req, user) => {
+wss.on("connection", async (ws, req, user) => {
     ws.user = user;           // per-socket user state
     ws.rooms = new Set();     // rooms this socket joined
     ws.msgCount = 0;          // simple rate limit counter
-
+    
     connections++; // Increment connection count
+    
+    // Track user socket locally for DMs
+    userSockets.set(user.username, ws);
+    
+    await setUserOnline(user.username, SERVER_ID);
+    ws.send(`Welcome ${user.username} to ${SERVER_ID}`);
 
-    ws.send(`Welcome ${user.username}`);
+    console.log("New connection:", ws, "User:", user.username);
 
-    ws.on("message", (buf) => {
+    ws.on("message", async (buf) => {
         // ---- Basic rate limit ----
         ws.msgCount++;
-        console.log(`Received message from ${user.username}. Count: ${ws.msgCount}`);
         if (ws.msgCount > 100) {
             ws.send("Rate limit exceeded");
             return;
         }
 
         const msg = buf.toString();
-        const data = JSON.parse(msg);
+        let data;
+        try {
+            data = JSON.parse(msg);
+        } catch {
+            return;
+        }
 
         if (data.type === "join") {
             joinRoom(data.room, ws);
             ws.send(`Joined room ${data.room}`);
+        }
+
+        if (data.type === "who-is-online") {
+            const users = await getAllOnlineUsers();
+            ws.send(JSON.stringify({ type: "online-list", users }));
+        }
+
+        // ---- NEW: DM Handling ----
+        if (data.type === "dm") {
+            const success = await sendDirectMessage(data.to, ws.user.username, data.text);
+            if (!success) {
+                ws.send(JSON.stringify({ type: "error", message: `User ${data.to} is offline` }));
+            }
         }
 
         if (data.type === "chat") {
@@ -82,19 +113,19 @@ wss.on("connection", (ws, req, user) => {
         }
     });
 
-    ws.on("close", () => {
+    ws.on("close", async () => {
         connections--;
+        userSockets.delete(user.username);
         leaveAllRooms(ws);
+        await setUserOffline(user.username);
     });
 });
 
-const PORT = process.env.PORT || 8080;
-
 server.listen(PORT, () => {
-    console.log(`WS Gateway running on ws://localhost:${PORT}`);
+    console.log("WS Gateway running on ws://localhost:" + PORT);
     console.log(
         "Demo token for testing:",
-        createToken("sivaganesz")
+        createToken("venkat")
     );
 });
 
