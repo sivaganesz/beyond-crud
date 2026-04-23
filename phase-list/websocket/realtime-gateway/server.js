@@ -17,7 +17,7 @@ setInterval(() => {
 import http from "http";
 import { WebSocketServer } from "ws";
 import { verifyToken, createToken } from "./auth.js";
-import { joinRoom, leaveAllRooms, broadcast, sendDirectMessage, userSockets, initMessenger } from "./rooms.js";
+import { joinRoom, leaveAllRooms, broadcast, sendDirectMessage, userSockets, initMessenger, syncDMHistory } from "./rooms.js";
 import { setupHeartbeat } from "./heartbeat.js";
 import { setUserOnline, setUserOffline, getAllOnlineUsers } from "./presence.js";
 
@@ -58,12 +58,12 @@ wss.on("connection", async (ws, req, user) => {
     ws.user = user;           // per-socket user state
     ws.rooms = new Set();     // rooms this socket joined
     ws.msgCount = 0;          // simple rate limit counter
-    
+
     connections++; // Increment connection count
-    
+
     // Track user socket locally for DMs
     userSockets.set(user.username, ws);
-    
+
     await setUserOnline(user.username, SERVER_ID);
     ws.send(`Welcome ${user.username} to ${SERVER_ID}`);
 
@@ -86,7 +86,8 @@ wss.on("connection", async (ws, req, user) => {
         }
 
         if (data.type === "join") {
-            joinRoom(data.room, ws);
+            // Support passing lastMsgId for history sync
+            await joinRoom(data.room, ws, data.lastMsgId);
             ws.send(`Joined room ${data.room}`);
         }
 
@@ -97,19 +98,19 @@ wss.on("connection", async (ws, req, user) => {
 
         // ---- NEW: DM Handling ----
         if (data.type === "dm") {
-            const success = await sendDirectMessage(data.to, ws.user.username, data.text);
+            const success = await sendDirectMessage(data.to, ws.user.username, data.text, data.lastMsgId);
             if (!success) {
                 ws.send(JSON.stringify({ type: "error", message: `User ${data.to} is offline` }));
             }
         }
 
         if (data.type === "chat") {
-            const payload = JSON.stringify({
-                from: ws.user.username,
-                room: data.room,
-                text: data.text,
-            });
-            broadcast(data.room, payload);
+            // New signature: roomId, fromUser, text
+            await broadcast(data.room, ws.user.username, data.text);
+        }
+        if (data.type === "dm-sync") {
+            await syncDMHistory(ws.user.username, ws, data.lastMsgId);
+            return;
         }
     });
 
@@ -130,28 +131,28 @@ server.listen(PORT, () => {
 });
 
 function gracefulShutdown() {
-  console.log("⚠️  SIGTERM received. Draining connections...");
-  isShuttingDown = true;
+    console.log("⚠️  SIGTERM received. Draining connections...");
+    isShuttingDown = true;
 
-  // Stop accepting new TCP connections
-  server.close(() => {
-    console.log("HTTP server closed");
-  });
+    // Stop accepting new TCP connections
+    server.close(() => {
+        console.log("HTTP server closed");
+    });
 
-  // Politely ask clients to close
-  wss.clients.forEach((ws) => {
-    if (ws.readyState === 1) {
-      ws.send("Server shutting down. Please reconnect.");
-      ws.close();
-    }
-  });
+    // Politely ask clients to close
+    wss.clients.forEach((ws) => {
+        if (ws.readyState === 1) {
+            ws.send("Server shutting down. Please reconnect.");
+            ws.close();
+        }
+    });
 
-  // Force kill after timeout
-  setTimeout(() => {
-    console.log("Force closing remaining sockets");
-    wss.clients.forEach((ws) => ws.terminate());
-    process.exit(0);
-  }, DRAIN_TIMEOUT);
+    // Force kill after timeout
+    setTimeout(() => {
+        console.log("Force closing remaining sockets");
+        wss.clients.forEach((ws) => ws.terminate());
+        process.exit(0);
+    }, DRAIN_TIMEOUT);
 }
 
 process.on("SIGTERM", gracefulShutdown);

@@ -2,14 +2,16 @@
 import Redis from "ioredis";
 import { getUserLocation } from "./presence.js";
 
-const MAX_BUFFER = 1 * 1024 * 1024; // 1MB safety
-const CHUNK_SIZE = 200; // Send to 200 users, then yield to Event Loop
+const MAX_BUFFER = 1 * 1024 * 1024;
+const CHUNK_SIZE = 200;
+const HISTORY_LIMIT = 100; // Store last 100 messages per room
 
 const redisPub = new Redis();
 const redisSub = new Redis();
+const redisStore = new Redis(); // Third client for history storage
 
-const rooms = new Map(); // Local sockets: Map<roomId, Set<socket>>
-export const userSockets = new Map(); // Local sockets: Map<username, socket>
+const rooms = new Map();
+export const userSockets = new Map();
 
 let currentServerId = null;
 
@@ -18,14 +20,16 @@ export function initMessenger(serverId) {
   redisSub.subscribe(`${serverId}:dm`);
 }
 
+// ---- Message ID Generator ----
+function generateMsgId() {
+  return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+}
+
 // ---- Optimized Message Handling ----
 redisSub.on("message", async (channel, message) => {
   if (channel.startsWith("room:")) {
     const roomId = channel.replace("room:", "");
     const localClients = Array.from(rooms.get(roomId) || []);
-    
-    // MASTER MOVE: Chunked Broadcasting
-    // We process the list in small batches to keep the Event Loop free.
     await chunkedBroadcast(localClients, message);
   }
 
@@ -36,25 +40,33 @@ redisSub.on("message", async (channel, message) => {
       safeSend(targetSocket, JSON.stringify({
         type: "dm",
         from: data.from,
-        text: data.text
+        text: data.text,
+        msgId: data.msgId
+      }));
+    }
+  }
+
+  if (channel === `${currentServerId}:dm`) {
+    const data = JSON.parse(message);
+    const targetSocket = userSockets.get(data.to);
+
+    if (targetSocket) {
+      safeSend(targetSocket, JSON.stringify({
+        type: "dm",
+        from: data.from,
+        text: data.text,
+        msgId: data.msgId
       }));
     }
   }
 });
 
-/**
- * Sends a message to a large list of clients without blocking the Event Loop.
- */
 async function chunkedBroadcast(clients, payload) {
   for (let i = 0; i < clients.length; i += CHUNK_SIZE) {
     const chunk = clients.slice(i, i + CHUNK_SIZE);
-    
-    // Send to this chunk
     for (const client of chunk) {
       safeSend(client, payload);
     }
-
-    // YIELD: Allow other tasks (like new connections) to run
     if (i + CHUNK_SIZE < clients.length) {
       await new Promise(resolve => setImmediate(resolve));
     }
@@ -63,20 +75,35 @@ async function chunkedBroadcast(clients, payload) {
 
 export function safeSend(ws, message) {
   if (ws.readyState !== 1) return;
-  
-  // High-Performance Backpressure: 
-  // If the client's buffer is too full, we skip THIS message instead of killing them.
-  // This is how Discord handles "laggy" users in big rooms.
-  if (ws.bufferedAmount > MAX_BUFFER) {
-    return; 
-  }
-
+  if (ws.bufferedAmount > MAX_BUFFER) return;
   ws.send(message);
 }
 
-// ... (joinRoom, leaveAllRooms, broadcast, sendDirectMessage remain same)
+// ---- Room Logic with History Sync ----
+export async function joinRoom(roomId, ws, lastMsgId = null) {
+  // 1. If user provided a lastMsgId, send them what they missed
+  if (lastMsgId) {
+    const history = await redisStore.lrange(`history:${roomId}`, 0, -1);
+    const missing = [];
+    let found = false;
 
-export function joinRoom(roomId, ws) {
+    // History is [newest...oldest]. We reverse or search to find messages after lastMsgId.
+    for (const msgStr of history.reverse()) {
+      const msg = JSON.parse(msgStr);
+      if (found) {
+        missing.push(msgStr);
+      } else if (msg.msgId === lastMsgId) {
+        found = true;
+      }
+    }
+
+    // Send catch-up messages
+    for (const m of missing) {
+      safeSend(ws, m);
+    }
+  }
+
+  // 2. Normal Join
   if (!rooms.has(roomId)) {
     rooms.set(roomId, new Set());
     redisSub.subscribe(`room:${roomId}`);
@@ -98,14 +125,55 @@ export function leaveAllRooms(ws) {
   }
 }
 
-export function broadcast(roomId, payload) {
+export async function broadcast(roomId, fromUser, text) {
+  const msgId = generateMsgId();
+  const payload = JSON.stringify({
+    type: "chat",
+    from: fromUser,
+    room: roomId,
+    text: text,
+    msgId: msgId
+  });
+
+  // 1. Store in history (List)
+  await redisStore.lpush(`history:${roomId}`, payload);
+  // 2. Trim history to keep it fast
+  await redisStore.ltrim(`history:${roomId}`, 0, HISTORY_LIMIT - 1);
+
+  // 3. Publish to live stream
   redisPub.publish(`room:${roomId}`, payload);
 }
 
-export async function sendDirectMessage(toUser, fromUser, text) {
+// ---- DM Logic with IDs ----
+export async function sendDirectMessage(toUser, fromUser, text, lastMsgId = null) {
   const targetServerId = await getUserLocation(toUser);
   if (!targetServerId) return false;
-  const payload = JSON.stringify({ to: toUser, from: fromUser, text });
+
+  const msgId = generateMsgId();
+  const payload = JSON.stringify({ to, from, text, msgId });
+
+  // STORE FIRST (truth)
+  await redisStore.lpush(`dm:${toUser}`, payload);
+  await redisStore.ltrim(`dm:${toUser}`, 0, HISTORY_LIMIT - 1);
+
+  // THEN publish
   redisPub.publish(`${targetServerId}:dm`, payload);
   return true;
+}
+
+export async function syncDMHistory(username, ws, lastMsgId) {
+  const history = await redisStore.lrange(`dm:${username}`, 0, -1);
+
+  let found = false;
+  const missing = [];
+
+  for (const msgStr of history.reverse()) {
+    const msg = JSON.parse(msgStr);
+    if (found) missing.push(msgStr);
+    else if (msg.msgId === lastMsgId) found = true;
+  }
+
+  for (const m of missing) {
+    safeSend(ws, m);
+  }
 }
