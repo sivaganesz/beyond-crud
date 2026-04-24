@@ -4,22 +4,13 @@ const DRAIN_TIMEOUT = 2000; // 15s to drain
 
 let connections = 0;
 
-setInterval(() => {
-    const mem = process.memoryUsage();
-    console.log({
-        connections,
-        rssMB: (mem.rss / 1024 / 1024).toFixed(1),
-        heapMB: (mem.heapUsed / 1024 / 1024).toFixed(1),
-    });
-}, 5000);
-
 // server.js
 import http from "http";
 import { WebSocketServer } from "ws";
 import { verifyToken, createToken } from "./auth.js";
-import { joinRoom, leaveAllRooms, broadcast, sendDirectMessage, userSockets, initMessenger, syncDMHistory } from "./rooms.js";
+import { joinRoom, leaveAllRooms, broadcast, sendDirectMessage, userSockets, initMessenger } from "./rooms.js";
 import { setupHeartbeat } from "./heartbeat.js";
-import { setUserOnline, setUserOffline, getAllOnlineUsers } from "./presence.js";
+import { setUserOnline, setUserOffline, getAllOnlineUsers, refreshPresence } from "./presence.js";
 import { register, Gauge, Counter } from "prom-client";
 
 // ---- Phase 8: Metrics Setup ----
@@ -40,6 +31,12 @@ const SERVER_ID = `server:${PORT}`;
 
 // Initialize the DM/Room transport for this server
 initMessenger(SERVER_ID);
+
+// ---- Phase 9: Presence Heartbeat ----
+setInterval(() => {
+    const localUsers = Array.from(userSockets.keys());
+    refreshPresence(localUsers).catch(console.error);
+}, 10000);
 
 const server = http.createServer(async (req, res) => {
     // Expose Prometheus metrics
@@ -66,7 +63,6 @@ server.on("upgrade", (req, socket, head) => {
 
     try {
         const user = verifyToken(token);
-
         wss.handleUpgrade(req, socket, head, (ws) => {
             wss.emit("connection", ws, req, user);
         });
@@ -77,11 +73,11 @@ server.on("upgrade", (req, socket, head) => {
 
 // ---- Connection lifecycle ----
 wss.on("connection", async (ws, req, user) => {
-    ws.user = user;           // per-socket user state
-    ws.rooms = new Set();     // rooms this socket joined
-    ws.msgCount = 0;          // simple rate limit counter
+    ws.user = user;           
+    ws.rooms = new Set();     
+    ws.msgCount = 0;          
 
-    connections++; // Increment connection count
+    connections++; 
     activeConnections.inc({ server_id: SERVER_ID });
 
     // Track user socket locally for DMs
@@ -92,7 +88,6 @@ wss.on("connection", async (ws, req, user) => {
 
     ws.on("message", async (buf) => {
         messagesReceived.inc({ server_id: SERVER_ID, type: "total" });
-        // ---- Basic rate limit ----
         ws.msgCount++;
         if (ws.msgCount > 100) {
             ws.send("Rate limit exceeded");
@@ -111,7 +106,6 @@ wss.on("connection", async (ws, req, user) => {
         }
 
         if (data.type === "join") {
-            // Support passing lastMsgId for history sync
             await joinRoom(data.room, ws, data.lastMsgId);
             ws.send(`Joined room ${data.room}`);
         }
@@ -121,21 +115,15 @@ wss.on("connection", async (ws, req, user) => {
             ws.send(JSON.stringify({ type: "online-list", users }));
         }
 
-        // ---- NEW: DM Handling ----
         if (data.type === "dm") {
-            const success = await sendDirectMessage(data.to, ws.user.username, data.text, data.lastMsgId);
+            const success = await sendDirectMessage(data.to, ws.user.username, data.text);
             if (!success) {
                 ws.send(JSON.stringify({ type: "error", message: `User ${data.to} is offline` }));
             }
         }
 
         if (data.type === "chat") {
-            // New signature: roomId, fromUser, text
             await broadcast(data.room, ws.user.username, data.text);
-        }
-        if (data.type === "dm-sync") {
-            await syncDMHistory(ws.user.username, ws, data.lastMsgId);
-            return;
         }
     });
 
@@ -149,37 +137,21 @@ wss.on("connection", async (ws, req, user) => {
 });
 
 server.listen(PORT, () => {
-    console.log("WS Gateway running on ws://localhost:" + PORT);
-    console.log(
-        "Demo token for testing:",
-        createToken("venkat")
-    );
+    console.log(`WS Gateway running on ws://localhost:${PORT}`);
+    console.log("Demo token for testing:", createToken("venk"));
 });
 
 function gracefulShutdown() {
-    console.log("⚠️  SIGTERM received. Draining connections...");
     isShuttingDown = true;
-
-    // Stop accepting new TCP connections
-    server.close(() => {
-        console.log("HTTP server closed");
-    });
-
-    // Politely ask clients to close
+    server.close();
     wss.clients.forEach((ws) => {
         if (ws.readyState === 1) {
             ws.send("Server shutting down. Please reconnect.");
             ws.close();
         }
     });
-
-    // Force kill after timeout
-    setTimeout(() => {
-        console.log("Force closing remaining sockets");
-        wss.clients.forEach((ws) => ws.terminate());
-        process.exit(0);
-    }, DRAIN_TIMEOUT);
+    setTimeout(() => process.exit(0), DRAIN_TIMEOUT);
 }
 
 process.on("SIGTERM", gracefulShutdown);
-process.on("SIGINT", gracefulShutdown); // Ctrl+C
+process.on("SIGINT", gracefulShutdown);

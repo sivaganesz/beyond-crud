@@ -2,36 +2,58 @@
 import Redis from "ioredis";
 
 const redis = new Redis();
-const PRESENCE_KEY = "presence";
+const PRESENCE_PREFIX = "presence:";
+const TTL = 30; // Seconds until a user is considered offline
 
 /**
- * Marks a user as online on a specific server.
+ * Marks a user as online with a TTL.
  */
 export async function setUserOnline(username, serverId) {
-  // We store: User -> ServerID
-  await redis.hset(PRESENCE_KEY, username, serverId);
-  console.log(`Presence: ${username} is online on ${serverId}`);
+  // Key: presence:white, Value: server:8080, Expiry: 30s
+  await redis.set(`${PRESENCE_PREFIX}${username}`, serverId, "EX", TTL);
 }
 
 /**
- * Marks a user as offline.
+ * Refreshes the TTL for a list of users (The Heartbeat).
+ * We use a Pipeline for high performance.
+ */
+export async function refreshPresence(usernames) {
+  if (usernames.length === 0) return;
+  
+  const pipeline = redis.pipeline();
+  for (const name of usernames) {
+    pipeline.expire(`${PRESENCE_PREFIX}${name}`, TTL);
+  }
+  await pipeline.exec();
+}
+
+/**
+ * Marks a user as offline immediately.
  */
 export async function setUserOffline(username) {
-  await redis.hdel(PRESENCE_KEY, username);
-  console.log(`Presence: ${username} went offline`);
+  await redis.del(`${PRESENCE_PREFIX}${username}`);
 }
 
 /**
  * Finds which server a user is connected to.
- * Returns null if they are offline.
  */
 export async function getUserLocation(username) {
-  return await redis.hget(PRESENCE_KEY, username);
+  return await redis.get(`${PRESENCE_PREFIX}${username}`);
 }
 
 /**
- * Gets a list of all online users. (The "Green Dot" list)
+ * Gets all online users by scanning for the prefix.
  */
 export async function getAllOnlineUsers() {
-  return await redis.hkeys(PRESENCE_KEY);
+  let keys = [];
+  let cursor = "0";
+  
+  // SCAN is safer than KEYS * in production
+  do {
+    const [newCursor, foundKeys] = await redis.scan(cursor, "MATCH", `${PRESENCE_PREFIX}*`, "COUNT", 100);
+    cursor = newCursor;
+    keys.push(...foundKeys);
+  } while (cursor !== "0");
+
+  return keys.map(k => k.replace(PRESENCE_PREFIX, ""));
 }
