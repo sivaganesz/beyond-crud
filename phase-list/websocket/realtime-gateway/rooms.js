@@ -73,6 +73,7 @@ export async function broadcast(roomId, fromUser, text) {
     fromUser,
     text
   });
+  console.log(`[Gateway] Message from ${fromUser} added to queue for room ${roomId}`);
 }
 
 export async function sendDirectMessage(toUser, fromUser, text) {

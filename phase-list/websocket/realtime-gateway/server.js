@@ -12,6 +12,9 @@ import { joinRoom, leaveAllRooms, broadcast, sendDirectMessage, userSockets, ini
 import { setupHeartbeat } from "./heartbeat.js";
 import { setUserOnline, setUserOffline, getAllOnlineUsers, refreshPresence } from "./presence.js";
 import { register, Gauge, Counter } from "prom-client";
+import cors from "cors";
+
+const corsMiddleware = cors();
 
 // ---- Phase 8: Metrics Setup ----
 const activeConnections = new Gauge({
@@ -39,14 +42,26 @@ setInterval(() => {
 }, 10000);
 
 const server = http.createServer(async (req, res) => {
-    // Expose Prometheus metrics
-    if (req.url === "/metrics") {
-        res.setHeader("Content-Type", register.contentType);
-        res.end(await register.metrics());
-        return;
-    }
-    res.writeHead(404);
-    res.end();
+    corsMiddleware(req, res, async () => {
+        // Expose Prometheus metrics
+        if (req.url === "/metrics") {
+            res.setHeader("Content-Type", register.contentType);
+            res.end(await register.metrics());
+            return;
+        }
+
+        // ---- UI Helper: Token Generation ----
+        if (req.url.startsWith("/token/")) {
+            const username = req.url.split("/").pop();
+            const token = createToken(username);
+            res.setHeader("Content-Type", "application/json");
+            res.end(JSON.stringify({ token }));
+            return;
+        }
+
+        res.writeHead(404);
+        res.end();
+    });
 });
 
 const wss = new WebSocketServer({ noServer: true });

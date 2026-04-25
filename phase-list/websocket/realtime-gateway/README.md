@@ -35,6 +35,25 @@ A performance testing script used to simulate high concurrency.
 *   **`token(id)`** — A helper function to generate unique JWTs for simulated users.
 *   **`for loop (Client Simulation)`** — Spawns 1000 (configurable) WebSocket clients that connect, join a "load" room, and send periodic "chat" messages to stress test the gateway.
 
-## `package.json`
-Defines project metadata and dependencies.
-*   **Dependencies**: Includes `jsonwebtoken` for auth and `ws` for WebSocket server/client functionality.
+## `client/` (React Dashboard)
+A modern "Systems Architect Dashboard" built with React, TypeScript, and Tailwind CSS. It visualizes the entire distributed system.
+
+### Features
+*   **Presence Tracking:** See who is online across the entire cluster with "Green Dot" status.
+*   **Cross-Server Messaging:** Send DMs that are routed between different gateway nodes via Redis.
+*   **Room Synchronization:** Chat in rooms with automatic history catch-up on join.
+*   **Observability:** Real-time feedback on connection status and which specific server node you are connected to.
+
+### Running the Full System
+1.  **Start Redis** (Standard 6379 port).
+2.  **Start Worker:** `node worker.js`
+3.  **Start Gateways:**
+    *   Node 1: `$env:PORT=8080; node server.js`
+    *   Node 2: `$env:PORT=8081; node server.js`
+4.  **Start UI:**
+    ```bash
+    cd client
+    npm install
+    npm run dev
+    ```
+5.  **Open Browser:** Open `http://localhost:5173`. You can open multiple tabs and connect to different ports to see the distributed system in action.
